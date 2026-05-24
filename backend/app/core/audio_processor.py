@@ -13,14 +13,15 @@ class AudioBufferProcessor:
         self.buffer = np.zeros(0, dtype=np.float32)
         
         # VAD 판단을 위한 버퍼 및 파라미터 (프레임 크기 30ms = 480 샘플)
-        self.frame_size = int(sample_rate * 0.03) 
-        # 마이크 입력 수준에 최적화하여 기존 0.015에서 0.002로 조정
-        self.energy_threshold = 0.002  # 발화 여부 에너지 임계값
-        self.silence_limit_frames = int(0.8 / 0.03)  # 800ms 무음 시 발화 종료로 판단
+        self.frame_size = int(sample_rate * 0.03)
+        # 에너지 임계값 더 낮춤 (더 민감하게 음성 감지)
+        self.energy_threshold = 0.015  # 발화 여부 에너지 임계값 (노이즈 무시)
+        self.silence_limit_frames = int(0.5 / 0.03)  # 0.5초 무음 시 발화 종료로 판단 (빠른 반응)
         
         self.silent_frames_count = 0
         self.is_speaking = False
-        
+        self.speaking_frames_count = 0  # 연속 음성 프레임 수
+
     def append_chunk(self, raw_bytes: bytes) -> bool:
         """
         바이너리 바이트(Float32 PCM) 데이터를 수신하여 numpy 배열로 디코딩하고 버퍼에 누적합니다.
@@ -58,11 +59,17 @@ class AudioBufferProcessor:
                 if self.is_speaking and self.silent_frames_count >= self.silence_limit_frames:
                     # 말하다가 무음 임계시간 돌파 -> 자막 확정(transcription) 트리거!
                     self.is_speaking = False
+                    self.speaking_frames_count = 0
                     trigger_transcription = True
             else:
                 self.silent_frames_count = 0
                 self.is_speaking = True
-                
+                self.speaking_frames_count += 1
+                # 3초 이상 계속 말하면 실시간 처리 (partial 결과 빠르게 전송)
+                if self.speaking_frames_count >= int(3.0 / 0.03):
+                    trigger_transcription = True
+                    self.speaking_frames_count = 0  # 카운터 리셋
+
         return trigger_transcription
 
     def get_audio_data(self) -> np.ndarray:
@@ -78,3 +85,4 @@ class AudioBufferProcessor:
         self.buffer = np.zeros(0, dtype=np.float32)
         self.silent_frames_count = 0
         self.is_speaking = False
+        self.speaking_frames_count = 0

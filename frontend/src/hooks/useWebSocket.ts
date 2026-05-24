@@ -74,8 +74,11 @@ export function useWebSocket({ url, onMessage, onOpen, onClose }: UseWebSocketPr
       };
 
       ws.onerror = (err) => {
-        console.error('WebSocket encountered an error:', err);
-        setError('서버 연결 중 에러가 발생했습니다.');
+        console.error('❌ WebSocket error:', err);
+        const errorMsg = err instanceof Event
+          ? '서버 연결 중 에러가 발생했습니다. 브라우저 콘솔을 확인하세요.'
+          : String(err);
+        setError(errorMsg);
       };
 
       ws.onclose = () => {

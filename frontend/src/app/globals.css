@@ -208,3 +208,174 @@ h1, h2, h3, h4, h5, h6 {
 .spk-2 { background-color: rgba(20, 184, 166, 0.15); color: #2dd4bf; border: 1px solid rgba(20, 184, 166, 0.3); }
 .spk-3 { background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
 .spk-generic { background-color: rgba(107, 114, 128, 0.15); color: #9ca3af; border: 1px solid rgba(107, 114, 128, 0.3); }
+
+/* 신규 UI/UX용 추가 스타일 */
+
+/* 글래스모피즘 테이블 */
+.glass-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-top: 15px;
+}
+
+.glass-table th {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  font-weight: 600;
+  text-align: left;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.glass-table td {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.glass-table tr:last-child td {
+  border-bottom: none;
+}
+
+.glass-table tr:hover td {
+  background: rgba(255, 255, 255, 0.015);
+  color: #ffffff;
+}
+
+/* 스켈레톤 로더 */
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+
+.skeleton {
+  background: rgba(255, 255, 255, 0.05);
+  animation: skeletonPulse 1.5s infinite ease-in-out;
+  border-radius: var(--radius-sm);
+}
+
+/* 말풍선 챗 레이아웃 */
+.chat-bubble-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  max-width: 85%;
+  margin-bottom: 8px;
+}
+
+.chat-row.self {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.chat-bubble {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-light);
+  padding: 16px 20px;
+  border-radius: 18px;
+  border-top-left-radius: 4px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  color: var(--text-primary);
+  line-height: 1.6;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.chat-row.self .chat-bubble {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.2);
+  border-radius: 18px;
+  border-top-right-radius: 4px;
+}
+
+.chat-bubble:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.1);
+}
+
+/* 대시보드 메트릭 카드 */
+.metric-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; width: 4px; height: 100%;
+  background: var(--gradient-neon);
+}
+
+/* 커스텀 토글 스위치 */
+.custom-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+}
+
+.custom-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.custom-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border-light);
+  border-radius: 24px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.custom-slider::before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-secondary);
+  border-radius: 50%;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.custom-switch input:checked + .custom-slider {
+  background-color: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.custom-switch input:checked + .custom-slider::before {
+  transform: translateX(24px);
+  background-color: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-primary);
+}
+
+/* 펄싱 로더 */
+.pulsing-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--color-primary);
+  border-radius: 50%;
+  animation: pulseGlow 1.5s infinite;
+}
+

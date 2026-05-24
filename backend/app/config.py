@@ -19,7 +19,7 @@ class Settings:
     WHISPER_MODEL_SIZE: str = os.getenv("STT_MODEL_SIZE", "medium")
     WHISPER_DEVICE: str = os.getenv("STT_DEVICE", "cuda")
     WHISPER_COMPUTE_TYPE: str = os.getenv("STT_COMPUTE_TYPE", "float16")
-    BEAM_SIZE: int = 5
+    BEAM_SIZE: int = 1  # 실시간 처리용 (속도 최우선)
     
     # 화자 분리 설정
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")

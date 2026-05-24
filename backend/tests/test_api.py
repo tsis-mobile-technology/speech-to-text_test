@@ -94,3 +94,27 @@ def test_websocket_stream_connection():
             assert "session_id" in response
         except Exception as e:
             pytest.fail(f"WebSocket communication failed: {e}")
+
+
+def test_list_sessions_api(temp_audio_file):
+    # 1. 파일 업로드를 통해 세션 하나 생성
+    with open(temp_audio_file, "rb") as audio:
+        response = client.post(
+            "/api/v1/transcribe",
+            files={"audio_file": (os.path.basename(temp_audio_file), audio, "audio/wav")},
+            data={"enable_diarization": "false"}
+        )
+    assert response.status_code in [200, 202]
+    session_id = response.json()["session_id"]
+
+    # 2. 세션 목록 API 호출
+    response_list = client.get("/api/v1/sessions")
+    assert response_list.status_code == 200
+    sessions_list = response_list.json()
+    assert isinstance(sessions_list, list)
+    assert len(sessions_list) > 0
+    
+    # 생성된 세션 ID가 목록에 존재하는지 확인
+    session_ids = [s["session_id"] for s in sessions_list]
+    assert session_id in session_ids
+

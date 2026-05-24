@@ -46,22 +46,33 @@ export default function RootLayout({
                 </div>
               </Link>
               
-              <nav style={{ display: 'flex', gap: '20px' }}>
+              <nav style={{ display: 'flex', gap: '24px' }}>
                 <Link href="/" style={{
                   color: 'var(--text-secondary)',
                   textDecoration: 'none',
-                  fontWeight: 500,
-                  fontSize: '0.9rem'
-                }}>
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                  transition: 'color 0.2s ease'
+                }} className="nav-link">
                   실시간 회의
                 </Link>
                 <Link href="/upload" style={{
                   color: 'var(--text-secondary)',
                   textDecoration: 'none',
-                  fontWeight: 500,
-                  fontSize: '0.9rem'
-                }}>
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                  transition: 'color 0.2s ease'
+                }} className="nav-link">
                   음성 파일 변환
+                </Link>
+                <Link href="/sessions" style={{
+                  color: 'var(--text-secondary)',
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                  transition: 'color 0.2s ease'
+                }} className="nav-link">
+                  기록물 보관소
                 </Link>
               </nav>
             </div>
@@ -74,17 +85,19 @@ export default function RootLayout({
                 fontSize: '0.8rem',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px'
+                gap: '8px',
+                border: '1px solid rgba(20, 184, 166, 0.25)',
+                boxShadow: '0 0 10px rgba(20, 184, 166, 0.1)'
               }}>
-                <span style={{
+                <span className="pulsing-dot" style={{
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  backgroundColor: '#14b8a6',
+                  backgroundColor: 'var(--color-accent)',
                   display: 'inline-block'
                 }}></span>
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  GPU: <strong>RTX 3060</strong>
+                <span style={{ color: 'var(--text-primary)' }}>
+                  ON-PREMISE GPU: <strong style={{ color: 'white' }}>RTX 3060 12GB</strong>
                 </span>
               </div>
             </div>

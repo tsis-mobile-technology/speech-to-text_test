@@ -76,7 +76,8 @@ async def websocket_stt_stream(websocket: WebSocket):
     
     # 실시간 처리 중 누적된 최종 결과 목록
     finalized_segments = []
-    
+    processing_count = 0  # 처리 횟수 (고유 ID 생성용)
+
     try:
         while True:
             try:
@@ -98,60 +99,92 @@ async def websocket_stt_stream(websocket: WebSocket):
                 vad_triggered = audio_processor.append_chunk(raw_bytes)
                 logger.debug(f"Audio chunk received: {len(raw_bytes)} bytes, VAD triggered: {vad_triggered}")
                 
-                # VAD가 트리거되었거나 버퍼가 15초 이상 찬 경우 임시 전사 실행
-                # (실시간 반응성 및 레이턴시 최소화를 위한 적정 간격 제어)
-                audio_len = len(audio_processor.get_audio_data()) / 16000
-                
-                if vad_triggered or (audio_len > 0 and audio_len % 3.0 < 0.1):
+                # VAD 트리거로만 임시 전사 실행 (이미 2초 무음 대기로 최적화됨)
+                # 일정 간격 트리거는 제거하여 불필요한 공백 처리 방지
+                if vad_triggered:
                     # 1. 임시 WAV 파일 생성 (Whisper 추론용)
+                    import time
+                    start_time = time.time()
                     temp_wav = save_audio_buffer_to_file(audio_processor.get_audio_data())
-                    
+
                     try:
                         # 2. Whisper 전사 수행 (실시간 처리를 위해 beam_size=1로 빠르게 연산)
                         # ThreadPoolExecutor에 의해 GPU 추론 직렬화 보장
+                        whisper_start = time.time()
                         whisper_results = await asyncio.get_event_loop().run_in_executor(
                             stt_engine.executor,
                             stt_engine._transcribe_sync,  # 동기 래퍼 직접 사용
                             temp_wav,
                             "ko"
                         )
-                        
+                        whisper_time = time.time() - whisper_start
+
                         # VRAM 사용량 체크
                         vram_used, _ = check_vram_usage()
-                        
-                        # 3. 브라우저에 임시 실시간 자막 발송
-                        if whisper_results:
-                            # 임시 변환에서는 마지막 텍스트를 "partial" 또는 "final" 형태로 전송
-                            # 여기서는 가장 최신 발화에 대해 partial 타입으로 브라우저에 실시간 업데이트 피드백 제공
+                        total_time = time.time() - start_time
+                        logger.info(f"⏱️ 처리 시간: {total_time*1000:.0f}ms (Whisper: {whisper_time*1000:.0f}ms, VRAM: {vram_used}MB)")
+
+                        # 3. 브라우저에 실시간 자막 발송
+                        if whisper_results and len(whisper_results) > 0:
+                            logger.info(f"📤 Sending {len(whisper_results)} segments to client")
+                            processing_count += 1
+                            segment_count = 0
+
                             for idx, raw_seg in enumerate(whisper_results):
-                                is_last = (idx == len(whisper_results) - 1)
-                                msg_type = "partial" if is_last else "final"
-                                
-                                seg_id = f"rt-{session_id}-{idx}"
-                                trans_segment = TranscriptSegment(
-                                    id=seg_id,
-                                    session_id=session_id,
-                                    start=raw_seg["start"],
-                                    end=raw_seg["end"],
-                                    text=raw_seg["text"],
-                                    speaker="SPEAKER_00",  # 실시간 구간에서는 화자 지연 처리
-                                    confidence=raw_seg["confidence"],
-                                    is_final=(msg_type == "final")
-                                )
-                                
-                                await websocket.send_json({
-                                    "type": msg_type,
-                                    "session_id": session_id,
-                                    "segment": trans_segment.dict(),
-                                    "gpu_usage_mb": vram_used
-                                })
-                                
-                                if msg_type == "final":
-                                    # 확정된 세그먼트는 임시 수집
+                                # 세그먼트 검증
+                                if not raw_seg or not isinstance(raw_seg, dict):
+                                    logger.warning(f"⚠️ Skipping invalid segment at index {idx}")
+                                    continue
+
+                                if not raw_seg.get("text") or not str(raw_seg.get("text")).strip():
+                                    logger.debug(f"⚠️ Skipping empty text segment at index {idx}")
+                                    continue
+
+                                seg_id = f"rt-{session_id}-{processing_count}-{idx}"
+                                try:
+                                    trans_segment = TranscriptSegment(
+                                        id=seg_id,
+                                        session_id=session_id,
+                                        start=float(raw_seg.get("start", 0)),
+                                        end=float(raw_seg.get("end", 0)),
+                                        text=str(raw_seg.get("text", "")).strip(),
+                                        speaker="SPEAKER_00",
+                                        confidence=float(raw_seg.get("confidence", 0)),
+                                        is_final=True
+                                    )
+
+                                    await websocket.send_json({
+                                        "type": "final",
+                                        "session_id": session_id,
+                                        "segment": trans_segment.dict(),
+                                        "gpu_usage_mb": vram_used
+                                    })
+                                    logger.info(f"✅ Sent final: {trans_segment.text[:50]}")
+
+                                    # 중복 확인 후 저장
                                     if seg_id not in [s.id for s in finalized_segments]:
                                         finalized_segments.append(trans_segment)
                                         session_manager.add_segment(session_id, trans_segment)
-                                        
+                                        segment_count += 1
+                                    else:
+                                        logger.debug(f"⚠️ Duplicate segment ignored: {seg_id}")
+
+                                except ValueError as val_err:
+                                    logger.error(f"❌ Invalid segment data at {idx}: {val_err}")
+                                    continue
+                                except Exception as send_err:
+                                    logger.error(f"❌ Failed to send segment {seg_id}: {send_err}")
+                                    raise
+
+                            if segment_count == 0:
+                                logger.warning(f"⚠️ No valid segments to send (all filtered)")
+                        else:
+                            logger.debug(f"⚠️ No whisper results (empty array or None)")
+
+                        # Whisper 처리 완료 후 버퍼 초기화 (중복 처리 방지)
+                        audio_processor.clear()
+                        logger.debug(f"🗑️ Audio buffer cleared after processing")
+
                     finally:
                         if os.path.exists(temp_wav):
                             os.remove(temp_wav)
@@ -173,54 +206,112 @@ async def websocket_stt_stream(websocket: WebSocket):
     # ==========================================================
     # 연결이 끊겼거나 중지 시 최종 후처리: Diarization (화자 분리)
     # ==========================================================
-    logger.info(f"Performing final post-processing (Diarization) for session: {session_id}")
-    
+    logger.info(f"🔄 Final post-processing (Diarization) for session: {session_id}")
+
     full_audio = audio_processor.get_audio_data()
-    if len(full_audio) > 16000: # 최소 1초 이상의 오디오가 누적되었을 때만 처리
+    min_audio_samples = 16000  # 최소 1초 (16kHz)
+
+    if full_audio is None or len(full_audio) == 0:
+        logger.warning(f"⚠️ No audio data collected for session {session_id}")
+        session_manager.update_session(
+            session_id,
+            status="completed",
+            duration_sec=0,
+            speaker_count=0,
+            segments=[]
+        )
+        return
+
+    if len(full_audio) < min_audio_samples:
+        logger.warning(
+            f"⚠️ Audio too short ({len(full_audio)} samples, need {min_audio_samples}). "
+            f"Finalizing with existing segments."
+        )
+        unique_speakers = {seg.speaker for seg in finalized_segments if seg.speaker}
+        session_manager.update_session(
+            session_id,
+            status="completed",
+            duration_sec=round(len(full_audio) / 16000, 2),
+            speaker_count=len(unique_speakers),
+            segments=finalized_segments
+        )
+        return
+
+    temp_full_wav = None
+    try:
         temp_full_wav = save_audio_buffer_to_file(full_audio)
-        
+        logger.info(f"📁 Created temp WAV for diarization: {temp_full_wav}")
+
+        # 1. 최종 Whisper 전사 (beam_size=5)
         try:
-            # 1. 전체 오디오에 대해 한 번 더 최종 Whisper 전사 정밀 수행 (beam_size=5)
             whisper_results = await stt_engine.transcribe(temp_full_wav, language="ko")
-            
-            # 2. pyannote 화자 분리 1회 전체 실행
-            # ThreadPoolExecutor에 의해 GPU 추론 직렬화 보장
+            if not whisper_results:
+                logger.warning(f"⚠️ No Whisper results for final processing")
+                whisper_results = []
+        except Exception as whisper_err:
+            logger.error(f"❌ Whisper transcription failed: {whisper_err}")
+            whisper_results = []
+
+        # 2. pyannote 화자 분리
+        try:
             diarization_results = await diarizer.diarize(temp_full_wav)
-            
-            # 3. 시간 오버랩 기준으로 Whisper 전사 자막과 화자 분리 데이터 매핑 정렬
+            if not diarization_results:
+                logger.warning(f"⚠️ No diarization results")
+                diarization_results = []
+        except Exception as diar_err:
+            logger.error(f"❌ Diarization failed: {diar_err}")
+            diarization_results = []
+
+        # 3. 세그먼트 정렬 (둘 다 실패했을 수도 있음)
+        try:
             final_segments = align_segments(whisper_results, diarization_results, session_id)
-            
-            # 4. 세션 최종 결과 업데이트 및 저장
-            unique_speakers = {seg.speaker for seg in final_segments}
-            session_manager.update_session(
-                session_id,
-                status="completed",
-                duration_sec=round(len(full_audio)/16000, 2),
-                speaker_count=len(unique_speakers),
-                segments=final_segments
-            )
-            
-            # 5. 브라우저가 아직 살아있을 경우(강제 stop 명령 등으로 수동 정지된 경우)
-            # 최종 정렬 완료된 전체 리스트를 "speaker_updated" 메시지로 클라이언트에 전달
+            if not final_segments:
+                logger.info(f"ℹ️ Using previously finalized segments ({len(finalized_segments)})")
+                final_segments = finalized_segments
+        except Exception as align_err:
+            logger.error(f"❌ Alignment failed: {align_err}")
+            final_segments = finalized_segments
+
+        # 4. 세션 완료 처리
+        unique_speakers = {seg.speaker for seg in final_segments if seg.speaker}
+        session_manager.update_session(
+            session_id,
+            status="completed",
+            duration_sec=round(len(full_audio) / 16000, 2),
+            speaker_count=len(unique_speakers),
+            segments=final_segments
+        )
+        logger.info(
+            f"✅ Session {session_id} completed: "
+            f"{len(final_segments)} segments, {len(unique_speakers)} speakers"
+        )
+
+        # 5. 클라이언트에 최종 결과 전송
+        if final_segments:
             try:
                 await websocket.send_json({
                     "type": "speaker_updated",
                     "session_id": session_id,
-                    "message": "Final transcription and speaker diarization aligned successfully.",
+                    "message": "Final transcription and diarization complete.",
                     "segments": [seg.dict() for seg in final_segments]
                 })
-            except Exception:
-                # 연결이 완전히 끊긴 경우 예외 무시
-                pass
-                
-            logger.info(f"Final post-processing complete for session: {session_id}")
-            
-        except Exception as ex:
-            logger.error(f"Failed to perform post-diarization process: {ex}")
-            session_manager.update_session(session_id, status="failed", error_message=str(ex))
-        finally:
-            if os.path.exists(temp_full_wav):
+                logger.info(f"📤 Sent speaker_updated message to client")
+            except Exception as send_err:
+                logger.debug(f"ℹ️ Client connection closed before final message: {send_err}")
+        else:
+            logger.warning(f"⚠️ No segments to send to client")
+
+    except Exception as ex:
+        logger.error(f"❌ Post-processing failed: {ex}", exc_info=True)
+        session_manager.update_session(
+            session_id,
+            status="failed",
+            error_message=f"Post-processing error: {str(ex)}"
+        )
+    finally:
+        if temp_full_wav and os.path.exists(temp_full_wav):
+            try:
                 os.remove(temp_full_wav)
-    else:
-        logger.warning(f"Audio buffer too short to finalize session: {session_id}")
-        session_manager.update_session(session_id, status="completed", segments=[])
+                logger.debug(f"🗑️ Removed temp WAV file")
+            except OSError as cleanup_err:
+                logger.error(f"Failed to remove temp file: {cleanup_err}")
