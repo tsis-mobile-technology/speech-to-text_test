@@ -269,12 +269,12 @@ function calculateAverageConfidence(segments: Segment[]): number {
  * 메트릭 카드 컴포넌트
  */
 function MetricCard({
-  icon: Icon,
+  icon: IconComponent,
   label,
   value,
   color,
 }: {
-  icon: React.ReactNode;
+  icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
   label: string;
   value: string;
   color: string;
@@ -293,7 +293,7 @@ function MetricCard({
         textAlign: 'center',
       }}
     >
-      {typeof Icon === 'function' ? <Icon size={20} style={{ color }} /> : Icon}
+      <IconComponent size={20} style={{ color }} />
       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{label}</div>
       <div style={{ fontSize: '1.3rem', fontWeight: 700, color }}>{value}</div>
     </div>
