@@ -79,13 +79,24 @@ async def websocket_stt_stream(websocket: WebSocket):
     
     try:
         while True:
-            # 바이너리 바이트 PCM 청크 수신
-            message = await websocket.receive()
-            
+            try:
+                # 바이너리 바이트 PCM 청크 수신
+                logger.debug(f"Waiting for message from client...")
+                message = await websocket.receive()
+                logger.debug(f"Message received: {list(message.keys())}")
+
+            except asyncio.CancelledError:
+                logger.warning(f"WebSocket task cancelled for session {session_id}")
+                raise
+            except Exception as recv_err:
+                logger.error(f"Error receiving message: {recv_err}")
+                raise
+
             if "bytes" in message:
                 raw_bytes = message["bytes"]
                 # 오디오 수집 버퍼에 충전 및 VAD 트리거 판정
                 vad_triggered = audio_processor.append_chunk(raw_bytes)
+                logger.debug(f"Audio chunk received: {len(raw_bytes)} bytes, VAD triggered: {vad_triggered}")
                 
                 # VAD가 트리거되었거나 버퍼가 15초 이상 찬 경우 임시 전사 실행
                 # (실시간 반응성 및 레이턴시 최소화를 위한 적정 간격 제어)
