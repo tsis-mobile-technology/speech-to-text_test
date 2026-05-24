@@ -56,14 +56,29 @@ export function useAudioCapture({ onAudioChunk }: UseAudioCaptureProps) {
       audioContextRef.current = audioCtx;
 
       // 3. AudioWorklet 등록
-      await audioCtx.audioWorklet.addModule('/audio-processor.worklet.js');
-      
+      console.log('📦 AudioWorklet 로드 중: /audio-processor.worklet.js');
+      try {
+        await audioCtx.audioWorklet.addModule('/audio-processor.worklet.js');
+        console.log('✅ AudioWorklet 로드 성공');
+      } catch (workletErr: any) {
+        console.error('❌ AudioWorklet 로드 실패:', workletErr);
+        throw new Error(`AudioWorklet 로드 실패: ${workletErr.message}`);
+      }
+
       const source = audioCtx.createMediaStreamSource(stream);
+      console.log('✅ MediaStreamAudioSourceNode 생성 성공');
+
       const workletNode = new AudioWorkletNode(audioCtx, 'audio-stream-processor');
+      console.log('✅ AudioWorkletNode 생성 성공');
       
       // Worklet으로부터 청크 데이터를 받았을 때 실행할 이벤트 바인딩
+      let chunkCount = 0;
       workletNode.port.onmessage = (event) => {
         const audioChunk = event.data as Float32Array;
+        chunkCount++;
+        if (chunkCount % 10 === 0) { // 10개마다 한 번 로그
+          console.log(`🎵 AudioWorklet에서 청크 수신 (총 ${chunkCount}개): ${audioChunk.length} 샘플`);
+        }
         onAudioChunk(audioChunk);
       };
 

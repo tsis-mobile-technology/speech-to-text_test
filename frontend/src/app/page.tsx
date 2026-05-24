@@ -92,11 +92,20 @@ export default function RealtimeMeetingPage() {
     setCompletedSessionId(null);
     setSegments([]);
     setPartialSegment(null);
-    
-    // 1. WebSocket 서버 연결
-    wsConnect();
-    // 2. 마이크 캡처 시작
-    await startRecording();
+
+    try {
+      console.log('🎤 handleStart: 마이크 캡처 시작 중...');
+      // 1. 마이크 캡처 먼저 시작 (권한 확인용)
+      await startRecording();
+      console.log('✅ handleStart: 마이크 캡처 성공');
+
+      // 2. 마이크 캡처 성공 후 WebSocket 연결
+      console.log('🔌 handleStart: WebSocket 연결 중...');
+      wsConnect();
+      console.log('✅ handleStart: WebSocket 연결 요청 완료');
+    } catch (err) {
+      console.error('❌ handleStart 에러:', err);
+    }
   };
 
   // 녹음 정지 버튼 핸들러

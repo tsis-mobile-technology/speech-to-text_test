@@ -17,11 +17,23 @@ export function useWebSocket({ url, onMessage, onOpen, onClose }: UseWebSocketPr
   const isManuallyClosed = useRef(false);
 
   const connect = useCallback(() => {
+    // 이미 연결 중이면 새 연결 시도하지 않음
+    if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
+      console.warn('⚠️ WebSocket이 이미 연결 중입니다. 중복 연결 방지.');
+      return;
+    }
+
+    // 이미 연결되어 있으면 먼저 종료
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.warn('⚠️ 기존 WebSocket 연결이 있습니다. 종료 후 새로 연결합니다.');
+      wsRef.current.close();
+    }
+
     isManuallyClosed.current = false;
     setError(null);
-    
+
     try {
-      console.log(`Connecting to WebSocket: ${url}`);
+      console.log(`🔌 WebSocket 연결 시도: ${url}`);
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
@@ -35,8 +47,10 @@ export function useWebSocket({ url, onMessage, onOpen, onClose }: UseWebSocketPr
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          console.log(`📨 WebSocket 메시지 수신:`, data.type);
           onMessage(data);
         } catch (err) {
+          console.warn(`⚠️ JSON 파싱 실패:`, err);
           // 바이너리 데이터 수신은 무시 (서버는 JSON만 전송하므로)
         }
       };
@@ -86,7 +100,14 @@ export function useWebSocket({ url, onMessage, onOpen, onClose }: UseWebSocketPr
   const sendAudioChunk = useCallback((chunk: Float32Array) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Float32Array를 직접 전송하여 버퍼 오프셋 및 슬라이스 오작동 방지
-      wsRef.current.send(chunk);
+      try {
+        console.log(`🔊 오디오 청크 전송: ${chunk.length} 샘플`);
+        wsRef.current.send(chunk);
+      } catch (err) {
+        console.error('❌ 오디오 청크 전송 실패:', err);
+      }
+    } else {
+      console.warn(`⚠️ WebSocket 미준비 (상태: ${wsRef.current?.readyState})`);
     }
   }, []);
 

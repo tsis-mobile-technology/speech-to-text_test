@@ -45,25 +45,34 @@ async def websocket_stt_stream(websocket: WebSocket):
     실시간 바이너리 오디오 PCM 데이터를 스트리밍 받아 자막을 추출하는 WebSocket 엔드포인트입니다.
     연결 종료 시 전체 오디오에 대해 화자 분리(Diarization)를 수행하여 결과를 업데이트합니다.
     """
-    await websocket.accept()
-    
-    session_id = str(uuid.uuid4())
-    logger.info(f"WebSocket client connected. Assgined session: {session_id}")
-    
-    # 세션 매니저에 등록
-    session_manager = SessionManager.get_instance()
-    session_manager.create_session(session_id)
-    
-    audio_processor = AudioBufferProcessor()
-    stt_engine = STTEngine.get_instance()
-    diarizer = DiarizationEngine.get_instance()
-    
-    # 최초 연결 환영 응답 전송
-    await websocket.send_json({
-        "type": "info",
-        "session_id": session_id,
-        "message": "Connection established. Ready to receive audio stream."
-    })
+    try:
+        await websocket.accept()
+        logger.info("✅ WebSocket accepted")
+
+        session_id = str(uuid.uuid4())
+        logger.info(f"🆔 WebSocket client connected. Session: {session_id}")
+
+        # 세션 매니저에 등록
+        session_manager = SessionManager.get_instance()
+        session_manager.create_session(session_id)
+        logger.info(f"📋 Session created: {session_id}")
+
+        audio_processor = AudioBufferProcessor()
+        stt_engine = STTEngine.get_instance()
+        diarizer = DiarizationEngine.get_instance()
+        logger.info("🔧 Engines initialized")
+
+        # 최초 연결 환영 응답 전송
+        logger.info("📤 Sending welcome message...")
+        await websocket.send_json({
+            "type": "info",
+            "session_id": session_id,
+            "message": "Connection established. Ready to receive audio stream."
+        })
+        logger.info("✅ Welcome message sent")
+    except Exception as e:
+        logger.error(f"❌ Error during WebSocket setup: {e}")
+        raise
     
     # 실시간 처리 중 누적된 최종 결과 목록
     finalized_segments = []
