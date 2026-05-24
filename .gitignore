@@ -1,0 +1,53 @@
+# Environment
+.env
+.env.local
+.env.*.local
+.antigravitycli/
+.claude
+
+# Python
+venv/
+env/
+*.py[cod]
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.pyc
+
+# Node
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (large, download on demand)
+backend/models/
+models/
+
+# Temporary files
+*.tmp
+temp/
+tmp/

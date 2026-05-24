@@ -1,0 +1,111 @@
+import os
+import uuid
+import logging
+from app.core.stt_engine import STTEngine
+from app.core.diarization import DiarizationEngine
+from app.utils.audio import convert_to_wav_16k_mono, get_audio_duration
+from app.models.transcript import TranscriptSegment
+
+logger = logging.getLogger(__name__)
+
+def align_segments(whisper_segments: list[dict], diarization_segments: list[dict], session_id: str) -> list[TranscriptSegment]:
+    """
+    Whisper 자막 구간과 Pyannote 화자 세그먼트를 시간 오버랩 기준으로 병합 정렬합니다.
+    """
+    aligned = []
+    
+    for i, w_seg in enumerate(whisper_segments):
+        w_start = w_seg["start"]
+        w_end = w_seg["end"]
+        w_mid = (w_start + w_end) / 2
+        
+        # 1차 매칭: Whisper 세그먼트의 중심점(Midpoint)이 Pyannote 화자 구간 내에 존재하는지 탐색
+        speaker = None
+        for d_seg in diarization_segments:
+            if d_seg["start"] <= w_mid <= d_seg["end"]:
+                speaker = d_seg["speaker"]
+                break
+                
+        # 2차 매칭: 중심점 매칭이 실패한 경우, 오버랩 시간(Overlap duration)이 가장 높은 화자 선택
+        if speaker is None:
+            max_overlap = 0.0
+            best_speaker = "SPEAKER_00"  # 기본값
+            
+            for d_seg in diarization_segments:
+                # 겹치는 구간 계산
+                overlap_start = max(w_start, d_seg["start"])
+                overlap_end = min(w_end, d_seg["end"])
+                overlap = max(0.0, overlap_end - overlap_start)
+                
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    best_speaker = d_seg["speaker"]
+            
+            speaker = best_speaker
+            
+        # Pydantic 모델로 자막 세그먼트 인스턴스 생성
+        aligned.append(
+            TranscriptSegment(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                start=w_start,
+                end=w_end,
+                text=w_seg["text"],
+                speaker=speaker,
+                confidence=w_seg["confidence"],
+                is_final=True
+            )
+        )
+        
+    return aligned
+
+async def run_stt_diarization_pipeline(session_id: str, file_path: str, enable_diarization: bool = True) -> tuple[list[TranscriptSegment], float, int]:
+    """
+    오디오 파일에 대해 전처리 -> STT -> 화자분리 -> 타임스탬프 정렬 파이프라인을 실행합니다.
+    """
+    logger.info(f"Starting pipeline for session: {session_id}, file: {file_path}")
+    
+    # 1. 오디오 리샘플링 (16kHz mono WAV 변환)
+    processed_path = file_path
+    is_temp = False
+    try:
+        converted = convert_to_wav_16k_mono(file_path)
+        if converted != file_path:
+            processed_path = converted
+            is_temp = True
+    except Exception as e:
+        logger.warning(f"Audio preprocessing failed: {e}. Attempting direct processing.")
+        
+    duration = get_audio_duration(processed_path)
+    
+    try:
+        # 2. STT (faster-whisper) 추론 실행
+        # stt_engine의 ThreadPoolExecutor를 타기 때문에 비동기적으로 스레드가 직렬 처리됨
+        stt_engine = STTEngine.get_instance()
+        whisper_results = await stt_engine.transcribe(processed_path, language="ko")
+        
+        diarization_results = []
+        unique_speakers = {"SPEAKER_00"}
+        
+        # 3. 화자분리 (pyannote.audio) 실행 (옵션에 따라 건너뛰기 가능)
+        if enable_diarization and duration > 0.5:
+            diarizer = DiarizationEngine.get_instance()
+            # diarize 역시 ThreadPoolExecutor 내부에서 순차 실행됨
+            diarization_results = await diarizer.diarize(processed_path)
+            
+            if diarization_results:
+                unique_speakers = {seg["speaker"] for seg in diarization_results}
+        
+        # 4. 시간 정렬(Alignment) 후처리
+        final_segments = align_segments(whisper_results, diarization_results, session_id)
+        
+        return final_segments, duration, len(unique_speakers)
+        
+    finally:
+        # 생성된 임시 리샘플링 파일 삭제하여 디스크 누수 방지
+        if is_temp and os.path.exists(processed_path):
+            try:
+                os.remove(processed_path)
+                logger.info(f"Cleaned up temporary audio file: {processed_path}")
+            except OSError as e:
+                logger.error(f"Failed to remove temporary file {processed_path}: {e}")
