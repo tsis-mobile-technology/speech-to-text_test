@@ -47,6 +47,8 @@ class Settings:
     MIN_SEGMENT_LENGTH: float = 0.8  # ⭐ 최소 세그먼트 길이 (초) 상향: 0.5 → 0.8
     MIN_SPEECH_DURATION: float = 1.0  # 최소 발화 길이 (초) - 이 이상만 보고
     REPETITION_THRESHOLD: float = 0.7  # ⭐ 반복 비율 70% 이상 필터링
+    LOG_PROB_THRESHOLD: float = -1.0  # ⭐ 로그확률 기반 필터링 (평균 로그확률 < -1.0)
+    COMPRESSION_RATIO_THRESHOLD: float = 30.0  # ⭐ 압축률 필터 (char/sec > 30 = 불가능한 속도 = 환각)
     
     # 화자 분리 설정
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")

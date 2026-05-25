@@ -144,6 +144,15 @@ class STTEngine:
                 import math
                 conf = round(math.exp(max(segment.avg_logprob, -5.0)), 2)
 
+                # Hallucination 필터링 0: 로그확률 기반 필터 (평균 로그확률이 극도로 낮음)
+                if segment.avg_logprob < settings.LOG_PROB_THRESHOLD:
+                    logger.warning(
+                        f"🚫 로그확률 기반 필터링 (신뢰도 극도 부족): "
+                        f"{segment.avg_logprob:.3f} < {settings.LOG_PROB_THRESHOLD} - '{segment.text[:50]}'"
+                    )
+                    filtered_count += 1
+                    continue
+
                 # Hallucination 필터링 1: 신뢰도 임계값
                 if conf < settings.CONFIDENCE_THRESHOLD:
                     logger.warning(
@@ -169,6 +178,17 @@ class STTEngine:
                     logger.warning(
                         f"🚫 음성 없음 확률로 필터링: "
                         f"{no_speech_prob:.2%} > {settings.NO_SPEECH_THRESHOLD:.0%} - '{segment.text[:50]}'"
+                    )
+                    filtered_count += 1
+                    continue
+
+                # Hallucination 필터링 3.5: 압축률 기반 필터 (짧은 음성에 긴 텍스트 = 반복 의심)
+                segment_duration = segment.end - segment.start
+                compression_ratio = len(segment.text) / max(segment_duration, 0.1)
+                if compression_ratio > settings.COMPRESSION_RATIO_THRESHOLD:
+                    logger.warning(
+                        f"🚫 압축률 기반 필터링 (반복 의심): "
+                        f"{compression_ratio:.2f} > {settings.COMPRESSION_RATIO_THRESHOLD} - '{segment.text[:50]}'"
                     )
                     filtered_count += 1
                     continue
