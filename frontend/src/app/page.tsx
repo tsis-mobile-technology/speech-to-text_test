@@ -1,101 +1,34 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useAudioCapture } from '@/hooks/useAudioCapture';
-import { useWebSocket } from '@/hooks/useWebSocket';
-import { Mic, Square, AlertCircle, HardDrive, Clock, ChevronRight, Activity, Keyboard } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { useSession } from '@/context/SessionContext';
+import { Mic, Square, AlertCircle, HardDrive, Clock, ChevronRight, Activity } from 'lucide-react';
 import Link from 'next/link';
 
-interface Segment {
-  id: string;
-  start: number;
-  end: number;
-  text: string;
-  speaker: string;
-  confidence: number;
-  is_final: boolean;
-}
-
 export default function RealtimeMeetingPage() {
-  const [segments, setSegments] = useState<Segment[]>([]);
-  const [partialSegment, setPartialSegment] = useState<Segment | null>(null);
-  const [gpuUsage, setGpuUsage] = useState<number>(0);
-  const [completedSessionId, setCompletedSessionId] = useState<string | null>(null);
-  
+  const {
+    isConnected,
+    wsError,
+    segments,
+    partialSegment,
+    gpuUsage,
+    completedSessionId,
+    connect,
+    disconnect,
+    clearSession,
+    isRecording,
+    audioError,
+    startRecording,
+    stopRecording,
+    mediaStream,
+    audioContext,
+  } = useSession();
+
   // 브라우저 뷰포트 스크롤 및 캔버스 관련 refs
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-
-  // WebSocket 메시지 수신 핸들러 (기능 무손실 보존)
-  const handleWebSocketMessage = useCallback((data: any) => {
-    if (!data || typeof data !== 'object') {
-      console.warn('⚠️ Invalid message data:', data);
-      return;
-    }
-
-    const messageType = data.type;
-    console.log('🎯 WebSocket message:', messageType);
-
-    try {
-      if (messageType === 'partial' && data.segment) {
-        if (!data.segment.text || data.segment.text.trim().length === 0) {
-          console.debug('⊘ Skipping empty partial segment');
-          return;
-        }
-
-        console.log('✅ partial:', data.segment.text.substring(0, 30));
-        setPartialSegment(data.segment);
-
-        if (data.gpu_usage_mb !== undefined && data.gpu_usage_mb !== null) {
-          setGpuUsage(data.gpu_usage_mb);
-        }
-      } else if (messageType === 'final' && data.segment) {
-        if (!data.segment || !data.segment.id) {
-          console.warn('⚠️ Final segment missing required fields');
-          return;
-        }
-
-        if (!data.segment.text || data.segment.text.trim().length === 0) {
-          console.debug('⊘ Skipping empty final segment');
-          return;
-        }
-
-        console.log('✅ final:', data.segment.text.substring(0, 30));
-
-        if (data.gpu_usage_mb !== undefined && data.gpu_usage_mb !== null) {
-          setGpuUsage(data.gpu_usage_mb);
-        }
-
-        setSegments((prev) => {
-          if (prev.some((s) => s.id === data.segment.id)) {
-            console.log('⊘ Duplicate segment ignored:', data.segment.id);
-            return prev;
-          }
-          return [...prev, data.segment];
-        });
-
-        setPartialSegment(null);
-      } else if (messageType === 'speaker_updated') {
-        console.log('🎤 speaker_updated:', data.segments?.length ?? 0, 'segments');
-
-        if (data.segments && Array.isArray(data.segments)) {
-          if (data.segments.length > 0) {
-            setSegments(data.segments);
-          }
-        }
-
-        if (data.session_id) {
-          setCompletedSessionId(data.session_id);
-        }
-      } else if (messageType === 'error') {
-        console.error('❌ Server error:', data.error);
-      }
-    } catch (err) {
-      console.error('❌ Error processing WebSocket message:', err);
-    }
-  }, []);
 
   // 백엔드 WS 주소 산출
   const [wsUrl, setWsUrl] = useState('ws://localhost:8000/api/v1/ws/stream');
@@ -106,44 +39,15 @@ export default function RealtimeMeetingPage() {
     }
   }, []);
 
-  // WebSocket 커스텀 훅 바인딩
-  const {
-    isConnected,
-    error: wsError,
-    connect: wsConnect,
-    disconnect: wsDisconnect,
-    sendAudioChunk,
-  } = useWebSocket({
-    url: wsUrl,
-    onMessage: handleWebSocketMessage,
-    onClose: () => {
-      stopRecording();
-    }
-  });
-
-  // 오디오 캡처 커스텀 훅 바인딩
-  const {
-    isRecording,
-    error: audioError,
-    startRecording,
-    stopRecording,
-    audioContext,
-    mediaStream,
-  } = useAudioCapture({
-    onAudioChunk: sendAudioChunk,
-  });
-
   // 녹음 시작
   const handleStart = async () => {
-    setCompletedSessionId(null);
-    setSegments([]);
-    setPartialSegment(null);
+    clearSession();
 
     try {
+      console.log('🔌 WebSocket 연결 요청...');
+      connect(wsUrl);
       console.log('🎤 마이크 캡처 시작...');
       await startRecording();
-      console.log('🔌 WebSocket 연결 요청...');
-      wsConnect();
     } catch (err) {
       console.error('❌ 녹음 시작 실패:', err);
     }
@@ -152,7 +56,7 @@ export default function RealtimeMeetingPage() {
   // 녹음 정지
   const handleStop = async () => {
     await stopRecording();
-    wsDisconnect();
+    disconnect();
   };
 
   // 주파수 파형 그리기 로직 (네온 링 및 플랙시블 오디오 파동 개선)
@@ -162,18 +66,27 @@ export default function RealtimeMeetingPage() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let bufferLength = 0;
-    let dataArray = new Uint8Array(0);
-    let analyser: AnalyserNode | null = null;
+    // 레코딩 시작 시 분석기 초기화
+    if (isRecording && audioContext && mediaStream && !analyserRef.current) {
+      console.log('🎨 분석기 생성 시작');
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256; // 더 정밀한 분석
+      analyser.smoothingTimeConstant = 0.8; // 부드러운 변화
 
-    if (isRecording && audioContext && mediaStream) {
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 128; // 더 부드러운 반응성
-      const source = audioContext.createMediaStreamSource(mediaStream);
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      bufferLength = analyser.frequencyBinCount;
-      dataArray = new Uint8Array(bufferLength);
+      try {
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        source.connect(analyser);
+        analyserRef.current = analyser;
+        console.log('✅ 분석기 생성 완료');
+      } catch (err) {
+        console.error('❌ 분석기 생성 실패:', err);
+      }
+    }
+
+    // 레코딩 중단 시 분석기 정리
+    if (!isRecording && analyserRef.current) {
+      console.log('🎨 분석기 정리');
+      analyserRef.current = null;
     }
 
     let waveOffset = 0;
@@ -181,9 +94,12 @@ export default function RealtimeMeetingPage() {
       animationRef.current = requestAnimationFrame(draw);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      if (isRecording && analyser) {
+      if (isRecording && analyserRef.current) {
+        const analyser = analyserRef.current;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
         analyser.getByteFrequencyData(dataArray);
-        
+
         // 실시간 음성 네온 주파수 파동 그리기
         const barWidth = (canvas.width / bufferLength) * 1.5;
         let x = 0;
@@ -213,8 +129,7 @@ export default function RealtimeMeetingPage() {
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(99, 102, 241, 0.3)';
         ctx.lineWidth = 2;
-        
-        const points: number[] = [];
+
         waveOffset += 0.05;
 
         for (let i = 0; i < canvas.width; i++) {
@@ -245,8 +160,13 @@ export default function RealtimeMeetingPage() {
     }
   }, [segments, partialSegment]);
 
+  // 실시간 회의 페이지 진입(마운트) 시 이전 세션 데이터 및 에러 초기화
+  useEffect(() => {
+    clearSession();
+  }, [clearSession]);
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '30px' }} style={{ contentVisibility: 'auto' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '30px', contentVisibility: 'auto' }}>
       
       {/* 좌측: 실시간 자막 타임라인 뷰 */}
       <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 190px)' }}>
@@ -304,7 +224,7 @@ export default function RealtimeMeetingPage() {
           gap: '24px',
           maxHeight: 'calc(100vh - 380px)',
           background: 'rgba(15, 17, 26, 0.45)',
-          borderWidth: isRecording ? '1px' : '1px',
+          borderWidth: '1px',
           borderColor: isRecording ? 'rgba(99, 102, 241, 0.25)' : 'var(--border-light)',
           boxShadow: isRecording ? 'inset 0 0 40px rgba(99, 102, 241, 0.05)' : 'none'
         }}>

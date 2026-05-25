@@ -1,10 +1,8 @@
-import './globals.css';
-import Link from 'next/link';
+'use client';
 
-export const metadata = {
-  title: 'On-Premise STT Meeting Minutes System',
-  description: 'NVIDIA GPU 가속 온프레미스 한국어 실시간 STT 회의록 시스템',
-};
+import './globals.css';
+import { SessionProvider } from '@/context/SessionContext';
+import Header from '@/components/Header';
 
 export default function RootLayout({
   children,
@@ -14,100 +12,15 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body>
+        <SessionProvider>
         {/* 공통 헤더 네비게이션 */}
-        <header className="nav-header">
-          <div className="nav-container">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
-              <Link href="/" style={{ textDecoration: 'none' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    background: 'var(--gradient-neon)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 'bold',
-                    fontSize: '1.2rem',
-                    color: 'white'
-                  }}>
-                    Ω
-                  </div>
-                  <span style={{
-                    fontWeight: 800,
-                    fontSize: '1.25rem',
-                    fontFamily: 'var(--font-display)',
-                    letterSpacing: '-0.03em',
-                    color: 'white'
-                  }}>
-                    Aura<span className="gradient-text">STT</span>
-                  </span>
-                </div>
-              </Link>
-              
-              <nav style={{ display: 'flex', gap: '24px' }}>
-                <Link href="/" style={{
-                  color: 'var(--text-secondary)',
-                  textDecoration: 'none',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  transition: 'color 0.2s ease'
-                }} className="nav-link">
-                  실시간 회의
-                </Link>
-                <Link href="/upload" style={{
-                  color: 'var(--text-secondary)',
-                  textDecoration: 'none',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  transition: 'color 0.2s ease'
-                }} className="nav-link">
-                  음성 파일 변환
-                </Link>
-                <Link href="/sessions" style={{
-                  color: 'var(--text-secondary)',
-                  textDecoration: 'none',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  transition: 'color 0.2s ease'
-                }} className="nav-link">
-                  기록물 보관소
-                </Link>
-              </nav>
-            </div>
-            
-            {/* GPU 상태 모니터 미니 위젯 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div className="glass-panel" style={{
-                padding: '6px 14px',
-                borderRadius: '9999px',
-                fontSize: '0.8rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                border: '1px solid rgba(20, 184, 166, 0.25)',
-                boxShadow: '0 0 10px rgba(20, 184, 166, 0.1)'
-              }}>
-                <span className="pulsing-dot" style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: 'var(--color-accent)',
-                  display: 'inline-block'
-                }}></span>
-                <span style={{ color: 'var(--text-primary)' }}>
-                  ON-PREMISE GPU: <strong style={{ color: 'white' }}>RTX 3060 12GB</strong>
-                </span>
-              </div>
-            </div>
-          </div>
-        </header>
+        <Header />
 
         {/* 메인 콘텐츠 뷰포트 */}
         <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '40px 24px' }}>
           {children}
         </main>
+        </SessionProvider>
       </body>
     </html>
   );

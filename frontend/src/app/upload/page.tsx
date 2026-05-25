@@ -164,7 +164,7 @@ export default function AudioUploadPage() {
   };
 
   return (
-    <div style={{ maxWidth: '680px', margin: '20px auto 0' }} style={{ contentVisibility: 'auto' }}>
+    <div style={{ maxWidth: '680px', margin: '20px auto 0', contentVisibility: 'auto' }}>
       
       {/* 타이틀 헤더 */}
       <div style={{ textAlign: 'center', marginBottom: '40px' }}>

@@ -274,7 +274,7 @@ function MetricCard({
   value,
   color,
 }: {
-  icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
+  icon: React.ComponentType<any>;
   label: string;
   value: string;
   color: string;

@@ -8,7 +8,7 @@ from app.models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-def align_segments(whisper_segments: list[dict], diarization_segments: list[dict], session_id: str) -> list[TranscriptSegment]:
+def align_segments(whisper_segments: list[dict], diarization_segments: list[dict], session_id: str, detected_language: str = "unknown") -> list[TranscriptSegment]:
     """
     Whisper 자막 구간과 Pyannote 화자 세그먼트를 시간 오버랩 기준으로 병합 정렬합니다.
     """
@@ -44,6 +44,8 @@ def align_segments(whisper_segments: list[dict], diarization_segments: list[dict
             speaker = best_speaker
             
         # Pydantic 모델로 자막 세그먼트 인스턴스 생성
+        segment_language = w_seg.get("language", detected_language)  # 세그먼트별 언어 또는 전체 감지 언어
+        no_speech_prob = w_seg.get("no_speech_prob")  # Hallucination 감지용
         aligned.append(
             TranscriptSegment(
                 id=str(uuid.uuid4()),
@@ -53,18 +55,28 @@ def align_segments(whisper_segments: list[dict], diarization_segments: list[dict
                 text=w_seg["text"],
                 speaker=speaker,
                 confidence=w_seg["confidence"],
-                is_final=True
+                is_final=True,
+                detected_language=segment_language,
+                no_speech_prob=no_speech_prob
             )
         )
         
     return aligned
 
-async def run_stt_diarization_pipeline(session_id: str, file_path: str, enable_diarization: bool = True) -> tuple[list[TranscriptSegment], float, int]:
+async def run_stt_diarization_pipeline(session_id: str, file_path: str, enable_diarization: bool = True,
+                                       beam_size: int = None, context: str = "meeting") -> tuple[list[TranscriptSegment], float, int]:
     """
     오디오 파일에 대해 전처리 -> STT -> 화자분리 -> 타임스탬프 정렬 파이프라인을 실행합니다.
+
+    Args:
+        session_id: 세션 ID
+        file_path: 오디오 파일 경로
+        enable_diarization: 화자분리 활성화 여부 (기본값: True)
+        beam_size: 빔 검색 크기 (None=balanced 사용)
+        context: 도메인 문맥 ("meeting", "technical", "general")
     """
-    logger.info(f"Starting pipeline for session: {session_id}, file: {file_path}")
-    
+    logger.info(f"Starting pipeline for session: {session_id}, file: {file_path}, beam_size={beam_size}, context={context}")
+
     # 1. 오디오 리샘플링 (16kHz mono WAV 변환)
     processed_path = file_path
     is_temp = False
@@ -75,14 +87,22 @@ async def run_stt_diarization_pipeline(session_id: str, file_path: str, enable_d
             is_temp = True
     except Exception as e:
         logger.warning(f"Audio preprocessing failed: {e}. Attempting direct processing.")
-        
+
     duration = get_audio_duration(processed_path)
-    
+
     try:
-        # 2. STT (faster-whisper) 추론 실행
+        # 2. STT (faster-whisper) 추론 실행 (파일용: beam_size=3 권장)
         # stt_engine의 ThreadPoolExecutor를 타기 때문에 비동기적으로 스레드가 직렬 처리됨
         stt_engine = STTEngine.get_instance()
-        whisper_results = await stt_engine.transcribe(processed_path, language="ko")
+        from app.config import settings
+        if beam_size is None:
+            beam_size = settings.BEAM_SIZE_BALANCED
+        initial_prompt = settings.CONTEXT_PROMPTS.get(context, "")
+
+        # 파일 업로드: 자동 언어 감지 사용 (language=None)
+        # → 영어-한국어 혼합 음성 정확도 향상
+        whisper_results = await stt_engine.transcribe(processed_path, language=None, beam_size=beam_size,
+                                                     initial_prompt=initial_prompt)
         
         diarization_results = []
         unique_speakers = {"SPEAKER_00"}
@@ -97,8 +117,11 @@ async def run_stt_diarization_pipeline(session_id: str, file_path: str, enable_d
                 unique_speakers = {seg["speaker"] for seg in diarization_results}
         
         # 4. 시간 정렬(Alignment) 후처리
-        final_segments = align_segments(whisper_results, diarization_results, session_id)
-        
+        # 첫 번째 세그먼트에서 감지된 언어 추출
+        detected_lang = whisper_results[0].get("language", "unknown") if whisper_results else "unknown"
+        final_segments = align_segments(whisper_results, diarization_results, session_id, detected_language=detected_lang)
+
+        logger.info(f"✅ 파이프라인 완료: 세그먼트 {len(final_segments)}개, 화자 {len(unique_speakers)}명, 언어 {detected_lang}")
         return final_segments, duration, len(unique_speakers)
         
     finally:

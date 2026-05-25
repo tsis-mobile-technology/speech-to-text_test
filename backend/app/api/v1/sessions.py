@@ -25,10 +25,13 @@ class SegmentUpdateRequest(BaseModel):
             raise ValueError('Speaker cannot be empty')
         return v.strip()
 
-@router.get("/sessions")
+@router.get("/sessions", tags=["Sessions"])
 async def list_sessions():
     """
     현재 메모리 상에 존재하는 모든 회의록 세션 목록을 반환합니다.
+
+    Returns:
+        List[SessionResult]: 생성 시간 역순으로 정렬된 세션 목록
     """
     session_manager = SessionManager.get_instance()
     # 생성 시간 역순으로 정렬하여 반환
@@ -37,6 +40,7 @@ async def list_sessions():
         key=lambda s: s.created_at,
         reverse=True
     )
+    logger.info(f"Listed {len(sorted_sessions)} sessions")
     return sorted_sessions
 
 @router.get("/sessions/{session_id}")

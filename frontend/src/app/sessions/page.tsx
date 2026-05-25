@@ -130,7 +130,7 @@ export default function SessionsDashboardPage() {
         <span className="gradient-text" style={{ fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           Dashboard & Archive
         </span>
-        <h1 style={{ fontSize: '2.5rem', marginTop: '4px', fontWeight: 800 }}>기록물 보관소 및 시스템 대시보드</h1>
+        <h1 style={{ fontSize: '2.5rem', marginTop: '4px', fontWeight: 800 }}>회의록 관리 및 대시보드</h1>
         <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
           온프레미스 GPU 가속 현황을 실시간 파악하고, 지금까지 기록된 회의 보관록을 탐색 및 다운로드합니다.
         </p>
@@ -215,7 +215,7 @@ export default function SessionsDashboardPage() {
         
         {/* 컨트롤 헤더 및 검색창 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>회의 보관록 목록</h2>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>회의 보관 목록</h2>
           
           <div style={{ position: 'relative', width: '320px' }}>
             <Search size={18} style={{ position: 'absolute', left: '14px', top: '13px', color: 'var(--text-muted)' }} />
@@ -343,17 +343,21 @@ export default function SessionsDashboardPage() {
                             borderColor: 'rgba(239, 68, 68, 0.25)',
                             color: '#fca5a5'
                           }}>
-                            실패
+                            비정상종료
                           </span>
                         )}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'inline-flex', gap: '8px' }}>
-                          <Link href={`/sessions/${session.session_id}`} className="btn btn-secondary" style={{
-                            padding: '6px 12px',
-                            borderRadius: 'var(--radius-sm)',
-                            fontSize: '0.8rem'
-                          }}>
+                          <Link 
+                            href={session.status === 'processing' ? '/' : `/sessions/${session.session_id}`} 
+                            className="btn btn-secondary" 
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '0.8rem'
+                            }}
+                          >
                             회의록 보기
                             <ChevronRight size={14} />
                           </Link>

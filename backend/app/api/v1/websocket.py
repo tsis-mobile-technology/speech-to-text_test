@@ -13,6 +13,7 @@ from app.core.diarization import DiarizationEngine
 from app.core.pipeline import align_segments
 from app.models.transcript import TranscriptSegment
 from app.utils.gpu_monitor import check_vram_usage
+from app.utils.audio import get_audio_duration
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -71,12 +72,25 @@ async def websocket_stt_stream(websocket: WebSocket):
         })
         logger.info("✅ Welcome message sent")
     except Exception as e:
-        logger.error(f"❌ Error during WebSocket setup: {e}")
+        logger.error(f"Error during WebSocket setup: {e}")
+        if 'session_id' in locals():
+            try:
+                SessionManager.get_instance().update_session(
+                    session_id,
+                    status="failed",
+                    error_message=f"Setup error: {str(e)}"
+                )
+            except Exception as update_err:
+                logger.error(f"Failed to update session status on setup error: {update_err}")
         raise
     
     # 실시간 처리 중 누적된 최종 결과 목록
     finalized_segments = []
     processing_count = 0  # 처리 횟수 (고유 ID 생성용)
+
+    # 화자 분리를 위한 임시 오디오 누적 (별도 버퍼)
+    diarization_audio_buffer = []  # 마지막 화자 분리 실행 이후의 오디오 누적
+    last_diarization_count = 0  # 마지막 화자 분리 실행 시점의 처리 횟수
 
     try:
         while True:
@@ -108,14 +122,17 @@ async def websocket_stt_stream(websocket: WebSocket):
                     temp_wav = save_audio_buffer_to_file(audio_processor.get_audio_data())
 
                     try:
-                        # 2. Whisper 전사 수행 (실시간 처리를 위해 beam_size=1로 빠르게 연산)
+                        # 2. Whisper 전사 수행 (실시간 처리: beam_size=1, 자동 언어 감지)
                         # ThreadPoolExecutor에 의해 GPU 추론 직렬화 보장
+                        from app.config import settings
                         whisper_start = time.time()
                         whisper_results = await asyncio.get_event_loop().run_in_executor(
                             stt_engine.executor,
                             stt_engine._transcribe_sync,  # 동기 래퍼 직접 사용
                             temp_wav,
-                            "ko"
+                            None,                         # ← 자동 언어 감지 (영어도 한국어도 자동 인식)
+                            settings.BEAM_SIZE_FAST,      # ⭐ 실시간 처리: 빠른 응답
+                            settings.CONTEXT_PROMPTS.get("bilingual", "")  # bilingual 프롬프트 사용
                         )
                         whisper_time = time.time() - whisper_start
 
@@ -142,6 +159,7 @@ async def websocket_stt_stream(websocket: WebSocket):
 
                                 seg_id = f"rt-{session_id}-{processing_count}-{idx}"
                                 try:
+                                    # 임시: 화자 분리는 나중에 수행하므로 기본값으로 설정
                                     trans_segment = TranscriptSegment(
                                         id=seg_id,
                                         session_id=session_id,
@@ -181,6 +199,11 @@ async def websocket_stt_stream(websocket: WebSocket):
                         else:
                             logger.debug(f"⚠️ No whisper results (empty array or None)")
 
+                        # 4. 누적된 오디오 저장 (화자 분리용)
+                        diarization_audio_buffer.append(audio_processor.get_audio_data().copy())
+                        audio_duration = len(audio_processor.get_audio_data()) / 16000
+                        logger.debug(f"💾 Audio accumulated: {audio_duration:.2f}s (total buffer segments: {len(diarization_audio_buffer)})")
+
                         # Whisper 처리 완료 후 버퍼 초기화 (중복 처리 방지)
                         audio_processor.clear()
                         logger.debug(f"🗑️ Audio buffer cleared after processing")
@@ -201,7 +224,15 @@ async def websocket_stt_stream(websocket: WebSocket):
         logger.info(f"WebSocket session {session_id} disconnected by client.")
     except Exception as e:
         logger.error(f"Error in WebSocket streaming loop: {e}")
-        await websocket.send_json({"type": "error", "session_id": session_id, "error": str(e)})
+        try:
+            await websocket.send_json({"type": "error", "session_id": session_id, "error": str(e)})
+        except Exception:
+            pass
+        session_manager.update_session(
+            session_id,
+            status="failed",
+            error_message=f"Streaming error: {str(e)}"
+        )
         
     # ==========================================================
     # 연결이 끊겼거나 중지 시 최종 후처리: Diarization (화자 분리)
@@ -228,10 +259,29 @@ async def websocket_stt_stream(websocket: WebSocket):
             f"Finalizing with existing segments."
         )
         unique_speakers = {seg.speaker for seg in finalized_segments if seg.speaker}
+
+        # 정확한 오디오 duration 계산 (버퍼 길이가 아닌 실제 파일 길이)
+        # 주의: full_audio는 float32 버퍼이므로, WAV 저장 후 ffprobe로 정확한 duration 계산
+        temp_wav_path = save_audio_buffer_to_file(full_audio)
+        actual_duration = get_audio_duration(temp_wav_path)
+        if actual_duration <= 0:
+            # 실패 시 버퍼 길이로 폴백
+            actual_duration = round(len(full_audio) / 16000, 2)
+            logger.warning(f"⚠️ Failed to get actual duration, using buffer length: {actual_duration}s")
+        else:
+            logger.info(f"✅ Actual audio duration: {actual_duration}s")
+
+        # 임시 파일 정리
+        if os.path.exists(temp_wav_path):
+            try:
+                os.remove(temp_wav_path)
+            except OSError:
+                pass
+
         session_manager.update_session(
             session_id,
             status="completed",
-            duration_sec=round(len(full_audio) / 16000, 2),
+            duration_sec=round(actual_duration, 2),
             speaker_count=len(unique_speakers),
             segments=finalized_segments
         )
@@ -242,9 +292,9 @@ async def websocket_stt_stream(websocket: WebSocket):
         temp_full_wav = save_audio_buffer_to_file(full_audio)
         logger.info(f"📁 Created temp WAV for diarization: {temp_full_wav}")
 
-        # 1. 최종 Whisper 전사 (beam_size=5)
+        # 1. 최종 Whisper 전사 (자동 언어 감지)
         try:
-            whisper_results = await stt_engine.transcribe(temp_full_wav, language="ko")
+            whisper_results = await stt_engine.transcribe(temp_full_wav, language=None)  # ← 자동 감지
             if not whisper_results:
                 logger.warning(f"⚠️ No Whisper results for final processing")
                 whisper_results = []
@@ -274,10 +324,20 @@ async def websocket_stt_stream(websocket: WebSocket):
 
         # 4. 세션 완료 처리
         unique_speakers = {seg.speaker for seg in final_segments if seg.speaker}
+
+        # 정확한 오디오 duration 계산 (저장된 WAV 파일 기준)
+        actual_duration = get_audio_duration(temp_full_wav) if temp_full_wav and os.path.exists(temp_full_wav) else None
+        if actual_duration is None or actual_duration <= 0:
+            # 실패 시 버퍼 길이로 폴백
+            actual_duration = round(len(full_audio) / 16000, 2)
+            logger.warning(f"⚠️ Failed to get actual duration, using buffer length: {actual_duration}s")
+        else:
+            logger.info(f"✅ Actual audio duration: {actual_duration}s")
+
         session_manager.update_session(
             session_id,
             status="completed",
-            duration_sec=round(len(full_audio) / 16000, 2),
+            duration_sec=round(actual_duration, 2),
             speaker_count=len(unique_speakers),
             segments=final_segments
         )
