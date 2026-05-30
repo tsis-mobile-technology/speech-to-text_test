@@ -3,10 +3,66 @@ import uuid
 import logging
 from app.core.stt_engine import STTEngine
 from app.core.diarization import DiarizationEngine
+from app.core.llm_corrector import LLMCorrector
 from app.utils.audio import convert_to_wav_16k_mono, get_audio_duration
 from app.models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
+
+
+def assign_speakers(segments: list[TranscriptSegment], diarization_segments: list[dict]) -> list[TranscriptSegment]:
+    """
+    이미 누적된 세그먼트(전역 타임스탬프)에 화자 라벨만 매핑한다.
+    텍스트/시간은 보존하고 speaker 필드만 갱신 → 전체 회의록을 잃지 않음.
+    매칭: 중심점(midpoint) 우선, 실패 시 최대 오버랩.
+    """
+    if not diarization_segments:
+        return segments
+
+    for seg in segments:
+        mid = (seg.start + seg.end) / 2
+        speaker = None
+        for d in diarization_segments:
+            if d["start"] <= mid <= d["end"]:
+                speaker = d["speaker"]
+                break
+        if speaker is None:
+            max_overlap = 0.0
+            best = seg.speaker or "SPEAKER_00"
+            for d in diarization_segments:
+                overlap = max(0.0, min(seg.end, d["end"]) - max(seg.start, d["start"]))
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    best = d["speaker"]
+            speaker = best
+        seg.speaker = speaker
+    return segments
+
+
+async def apply_llm_correction(segments: list[TranscriptSegment]) -> list[TranscriptSegment]:
+    """
+    저신뢰 세그먼트에 한해 LLM 문맥 보정을 적용한다(설정에 따라).
+    직전 N개 문장(보정된 텍스트 우선)을 문맥으로 전달. 실패 시 원문 유지.
+    """
+    corrector = LLMCorrector.get_instance()
+    if not corrector.is_enabled():
+        return segments
+
+    corrected_count = 0
+    for i, seg in enumerate(segments):
+        if not corrector.should_correct(seg.confidence, seg.text):
+            continue
+        prev_texts = [s.text for s in segments[max(0, i - 3):i]]  # 직전 최대 3개
+        new_text = await corrector.correct_async(seg.text, prev_texts)
+        if new_text and new_text != seg.text:
+            seg.original_text = seg.text
+            seg.text = new_text
+            seg.corrected = True
+            corrected_count += 1
+
+    if corrected_count > 0:
+        logger.info(f"✏️ LLM 후교정 적용: {corrected_count}개 세그먼트 (저신뢰)")
+    return segments
 
 def align_segments(whisper_segments: list[dict], diarization_segments: list[dict], session_id: str, detected_language: str = "unknown") -> list[TranscriptSegment]:
     """
@@ -120,6 +176,9 @@ async def run_stt_diarization_pipeline(session_id: str, file_path: str, enable_d
         # 첫 번째 세그먼트에서 감지된 언어 추출
         detected_lang = whisper_results[0].get("language", "unknown") if whisper_results else "unknown"
         final_segments = align_segments(whisper_results, diarization_results, session_id, detected_language=detected_lang)
+
+        # 5. LLM 문맥 후교정 (저신뢰 세그먼트 한정, 설정 시)
+        final_segments = await apply_llm_correction(final_segments)
 
         logger.info(f"✅ 파이프라인 완료: 세그먼트 {len(final_segments)}개, 화자 {len(unique_speakers)}명, 언어 {detected_lang}")
         return final_segments, duration, len(unique_speakers)

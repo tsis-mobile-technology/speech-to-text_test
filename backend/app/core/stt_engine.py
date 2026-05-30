@@ -14,6 +14,61 @@ except ImportError:
     logger.warning("faster-whisper is not installed. Running STT in mock mode.")
     WHISPER_AVAILABLE = False
 
+def _is_repetitive_text(text: str) -> bool:
+    """
+    문자/n-gram 단위 반복 할루시네이션을 탐지한다 (콤마 기반 필터의 사각지대 보완).
+    예: 'ㄷㄷㄷㄷ', 'ㅋㅋㅋㅋ', '네네네네', '그래그래그래' 등 콤마 없는 반복.
+    임계값은 config.py에서 '균형' 수준으로 노출되어 튜닝 가능.
+    """
+    t = text.strip().replace(" ", "")
+    if len(t) < settings.REPETITION_MIN_LENGTH:
+        return False  # 짧은 정상 발화 보호
+
+    # 1) 단일 문자 점유율 (ㄷㄷㄷ, ㅋㅋㅋ)
+    most_common_ratio = max(t.count(c) for c in set(t)) / len(t)
+    if most_common_ratio > settings.CHAR_REPETITION_RATIO:
+        return True
+
+    # 2) 고유 문자 다양성 (글자 종류가 극도로 적음)
+    if len(set(t)) / len(t) < settings.CHAR_DIVERSITY_MIN:
+        return True
+
+    # 3) 2~4-gram 반복 (그래그래그래, 네네네네)
+    for n in (2, 3, 4):
+        grams = [t[i:i + n] for i in range(0, len(t) - n + 1, n)]
+        if len(grams) >= 3 and len(set(grams)) / len(grams) < settings.NGRAM_REPETITION_RATIO:
+            return True
+
+    return False
+
+
+def _is_jamo_char(c: str) -> bool:
+    """완성되지 않은 한글 자모(ㄱ,ㄷ,ㄳ,ㅏ 등) 여부. (완성형 음절 가-힣은 제외)"""
+    o = ord(c)
+    return 0x3130 <= o <= 0x318F or 0x1100 <= o <= 0x11FF
+
+
+def _is_garbage_korean(text: str) -> bool:
+    """
+    자모-only / 깨진 한글 텍스트(환각·노이즈) 탐지.
+    - 완성형 음절(가-힣)도 영숫자도 없고 자모만 있으면 garbage (예: 'ㄷㄷ', 'ㄱㄷ', 'ㄴㄴㅇㄴ').
+    - 자모 비율이 임계 이상이면 깨진 텍스트로 간주.
+    정상 한국어('안녕하세요')·영어는 통과. 길이와 무관하게 단일 자모 garbage를 잡는다.
+    """
+    t = "".join(text.split())
+    if not t:
+        return True
+    has_syllable = any("가" <= c <= "힣" for c in t)  # 완성형 한글
+    has_ascii_alnum = any(c.isascii() and c.isalnum() for c in t)  # 영문/숫자
+    jamo_count = sum(1 for c in t if _is_jamo_char(c))
+
+    if not has_syllable and not has_ascii_alnum and jamo_count > 0:
+        return True  # 완성형/영숫자 전무 + 자모만 → garbage
+    if jamo_count / len(t) > settings.JAMO_RATIO_THRESHOLD:
+        return True  # 자모 비율 과다 → 깨진 텍스트
+    return False
+
+
 class STTEngine:
     _instance = None
     
@@ -115,28 +170,58 @@ class STTEngine:
 
             # 초기 프롬프트가 없으면 도메인별 기본값 사용 (회의 대화)
             # 다국어 혼합 오디오는 bilingual 프롬프트 사용 권장
+            # (실시간 경로는 websocket에서 ""을 넘겨 프롬프트를 끌 수 있음 → Tier 3)
             if initial_prompt is None:
                 # 자동 감지 시 bilingual 프롬프트 사용 (영어-한국어 혼합 대비)
                 domain = "bilingual" if settings.AUTO_DETECT_LANGUAGE and language is None else "meeting"
                 initial_prompt = settings.CONTEXT_PROMPTS.get(domain, "")
                 logger.info(f"📝 Context Prompt 적용: {domain}")
 
-            segments, info = self.model.transcribe(
-                audio_path,
-                language=whisper_language,  # None으로 설정하면 자동 감지
-                beam_size=beam_size,
-                temperature=settings.TEMPERATURE,
-                initial_prompt=initial_prompt,
-                vad_filter=settings.VAD_FILTER_ENABLED,  # ⭐ VAD 활성화 (무음/노이즈 제거)
-                vad_parameters={"min_silence_duration_ms": settings.VAD_MIN_SILENCE_DURATION_MS}
-            )
+            def _run_transcribe(lang):
+                # info(언어 감지 결과)는 segments 제너레이터 소비 전에 이미 계산되므로,
+                # 폴백 전 첫 호출은 전체 디코딩 비용 없이 언어 감지만 수행된다.
+                return self.model.transcribe(
+                    audio_path,
+                    language=lang,  # None으로 설정하면 자동 감지
+                    beam_size=beam_size,
+                    temperature=settings.TEMPERATURE,
+                    initial_prompt=initial_prompt,
+                    vad_filter=settings.VAD_FILTER_ENABLED,  # ⭐ VAD 활성화 (무음/노이즈 제거)
+                    vad_parameters={"min_silence_duration_ms": settings.VAD_MIN_SILENCE_DURATION_MS},
+                    # ── Tier 1: 디코딩 단계 할루시네이션 억제 (반복을 생성 시점에 차단) ──
+                    condition_on_previous_text=settings.CONDITION_ON_PREVIOUS_TEXT,
+                    no_repeat_ngram_size=settings.NO_REPEAT_NGRAM_SIZE,
+                    repetition_penalty=settings.REPETITION_PENALTY,
+                    compression_ratio_threshold=settings.WHISPER_COMPRESSION_RATIO_THRESHOLD,
+                    log_prob_threshold=settings.WHISPER_LOG_PROB_THRESHOLD,
+                    no_speech_threshold=settings.WHISPER_NO_SPEECH_THRESHOLD,
+                    hallucination_silence_threshold=settings.HALLUCINATION_SILENCE_THRESHOLD,
+                )
+
+            segments, info = _run_transcribe(whisper_language)
+
+            # ── Tier 3: 언어 감지 폴백 ──
+            # 자동 감지인데 감지 확률이 낮으면(불안정) 한국어로 강제 재전사하여 할루시네이션 방지.
+            # 예: 'ko' @ 0.52처럼 모델이 확신 못 하는 구간이 반복/잡음 환각을 유발했음.
+            if whisper_language is None and settings.AUTO_DETECT_LANGUAGE:
+                lang_prob = getattr(info, 'language_probability', 1.0)
+                detected = getattr(info, 'language', None)
+                if lang_prob < settings.LANGUAGE_FALLBACK_THRESHOLD:
+                    logger.warning(
+                        f"⚠️ 언어 감지 불안정 ({detected} @ {lang_prob:.2f} < "
+                        f"{settings.LANGUAGE_FALLBACK_THRESHOLD}) → '{settings.FALLBACK_LANGUAGE}' 강제 재전사"
+                    )
+                    segments, info = _run_transcribe(settings.FALLBACK_LANGUAGE)
 
             # 감지된 언어 로깅
             detected_language = getattr(info, 'language', 'unknown')
-            logger.info(f"✅ 감지된 언어: {detected_language}")
-            
+            lang_prob_final = getattr(info, 'language_probability', None)
+            logger.info(
+                f"✅ 감지된 언어: {detected_language}"
+                + (f" (prob={lang_prob_final:.2f})" if lang_prob_final is not None else "")
+            )
+
             result = []
-            detected_language = getattr(info, 'language', 'unknown')
             filtered_count = 0  # 필터링된 세그먼트 수
 
             for segment in segments:
@@ -210,6 +295,21 @@ class STTEngine:
             final_result = []
             for seg in result:
                 text = seg["text"].strip()
+
+                # Hallucination 최종 방어 -1: 자모-only/깨진 한글 (ㄷㄷ, ㄱㄷ, ㄴㄴㅇㄴ 등, 길이 무관)
+                if settings.FILTER_JAMO_ONLY and _is_garbage_korean(text):
+                    logger.warning(f"🚫 자모-only/깨진 텍스트 필터링 (Hallucination): '{text[:50]}'")
+                    filtered_count += 1
+                    continue
+
+                # Hallucination 최종 방어 0 (Tier 2): 문자/n-gram 단위 반복 감지
+                # 예: "ㄷㄷㄷㄷ", "ㅋㅋㅋ", "네네네네" (콤마 없는 반복 → 아래 콤마 필터의 사각지대)
+                if _is_repetitive_text(text):
+                    logger.warning(
+                        f"🚫 문자/n-gram 반복으로 필터링 (Hallucination): '{text[:50]}'"
+                    )
+                    filtered_count += 1
+                    continue
 
                 # Hallucination 최종 방어: 반복 단어 감지
                 # 예: "안녕하세요, 안녕하세요, 안녕하세요"

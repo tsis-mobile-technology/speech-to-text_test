@@ -34,12 +34,8 @@ async def list_sessions():
         List[SessionResult]: 생성 시간 역순으로 정렬된 세션 목록
     """
     session_manager = SessionManager.get_instance()
-    # 생성 시간 역순으로 정렬하여 반환
-    sorted_sessions = sorted(
-        session_manager.sessions.values(),
-        key=lambda s: s.created_at,
-        reverse=True
-    )
+    # 영속 저장소 기준 생성 시간 역순 목록
+    sorted_sessions = session_manager.list_sessions()
     logger.info(f"Listed {len(sorted_sessions)} sessions")
     return sorted_sessions
 
@@ -60,8 +56,7 @@ async def delete_session(session_id: str):
     메모리 캐시에서 특정 회의록 세션을 삭제합니다.
     """
     session_manager = SessionManager.get_instance()
-    if session_id in session_manager.sessions:
-        del session_manager.sessions[session_id]
+    if session_manager.delete_session(session_id):
         return {"status": "success", "message": f"Session {session_id} deleted successfully."}
     raise HTTPException(status_code=404, detail="Session not found")
 
@@ -197,6 +192,11 @@ async def update_transcript_segment(
                 f"Updated segment {segment_id} in session {session_id}: "
                 f"speaker {old_speaker}→{payload.speaker}"
             )
+            # 사용자 편집 영속화
+            try:
+                session_manager.store.save_full(session)
+            except Exception as e:
+                logger.error(f"세그먼트 편집 영속화 실패: {e}")
             break
 
     if not updated_segment:

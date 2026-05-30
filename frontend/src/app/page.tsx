@@ -166,68 +166,70 @@ export default function RealtimeMeetingPage() {
   }, [clearSession]);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '30px', contentVisibility: 'auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', contentVisibility: 'auto' }}>
       
-      {/* 좌측: 실시간 자막 타임라인 뷰 */}
-      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 190px)' }}>
-        
-        {/* 상단바 컨트롤 영역 */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-          <div>
-            <span className="gradient-text" style={{ fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Live Recording Room
-            </span>
-            <h1 style={{ fontSize: '2.25rem', marginTop: '4px', fontWeight: 800 }}>실시간 회의록 작성</h1>
-          </div>
-          
-          <div style={{ display: 'flex', gap: '12px' }}>
-            {!isRecording ? (
-              <button onClick={handleStart} className="btn btn-primary" style={{ padding: '14px 32px', borderRadius: '9999px' }}>
-                <Mic size={18} />
-                회의 시작
-              </button>
-            ) : (
-              <button onClick={handleStop} className="btn btn-danger mic-active" style={{ padding: '14px 32px', borderRadius: '9999px' }}>
-                <Square size={18} />
-                회의 종료
-              </button>
-            )}
-          </div>
+      {/* 상단바 컨트롤 영역 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <span className="gradient-text" style={{ fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Live Recording Room
+          </span>
+          <h1 style={{ fontSize: '2.25rem', marginTop: '4px', fontWeight: 800 }}>실시간 회의록 작성</h1>
         </div>
+        
+        <div style={{ display: 'flex', gap: '12px' }}>
+          {!isRecording ? (
+            <button onClick={handleStart} className="btn btn-primary" style={{ padding: '14px 32px', borderRadius: '9999px' }}>
+              <Mic size={18} />
+              회의 시작
+            </button>
+          ) : (
+            <button onClick={handleStop} className="btn btn-danger mic-active" style={{ padding: '14px 32px', borderRadius: '9999px' }}>
+              <Square size={18} />
+              회의 종료
+            </button>
+          )}
+        </div>
+      </div>
 
-        {/* 에러 피드백 */}
-        {(wsError || audioError) && (
-          <div className="glass-panel" style={{
-            padding: '16px 20px',
-            backgroundColor: 'rgba(239, 68, 68, 0.08)',
-            borderColor: 'rgba(239, 68, 68, 0.25)',
-            borderRadius: 'var(--radius-sm)',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px'
-          }}>
-            <AlertCircle color="#ef4444" size={20} />
-            <span style={{ fontSize: '0.9rem', color: '#fca5a5', fontWeight: 500 }}>
-              {wsError || audioError}
-            </span>
-          </div>
-        )}
-
-        {/* 메인 자막 타임라인 패널 */}
+      {/* 에러 피드백 */}
+      {(wsError || audioError) && (
         <div className="glass-panel" style={{
-          flex: 1,
-          padding: '30px',
-          overflowY: 'auto',
+          padding: '16px 20px',
+          backgroundColor: 'rgba(239, 68, 68, 0.08)',
+          borderColor: 'rgba(239, 68, 68, 0.25)',
+          borderRadius: 'var(--radius-sm)',
+          marginBottom: '4px',
           display: 'flex',
-          flexDirection: 'column',
-          gap: '24px',
-          maxHeight: 'calc(100vh - 380px)',
-          background: 'rgba(15, 17, 26, 0.45)',
-          borderWidth: '1px',
-          borderColor: isRecording ? 'rgba(99, 102, 241, 0.25)' : 'var(--border-light)',
-          boxShadow: isRecording ? 'inset 0 0 40px rgba(99, 102, 241, 0.05)' : 'none'
+          alignItems: 'center',
+          gap: '12px'
         }}>
+          <AlertCircle color="#ef4444" size={20} />
+          <span style={{ fontSize: '0.9rem', color: '#fca5a5', fontWeight: 500 }}>
+            {wsError || audioError}
+          </span>
+        </div>
+      )}
+
+      {/* 메인 2열 그리드 레이아웃 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '30px' }}>
+        
+        {/* 좌측: 실시간 자막 타임라인 뷰 */}
+        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 280px)' }}>
+          {/* 메인 자막 타임라인 패널 */}
+          <div className="glass-panel" style={{
+            flex: 1,
+            padding: '30px',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '24px',
+            maxHeight: 'calc(100vh - 280px)',
+            background: 'rgba(15, 17, 26, 0.45)',
+            borderWidth: '1px',
+            borderColor: isRecording ? 'rgba(99, 102, 241, 0.25)' : 'var(--border-light)',
+            boxShadow: isRecording ? 'inset 0 0 40px rgba(99, 102, 241, 0.05)' : 'none'
+          }}>
           {segments.length === 0 && !partialSegment && (
             <div style={{
               flex: 1,
@@ -287,6 +289,21 @@ export default function RealtimeMeetingPage() {
                           borderColor: seg.confidence >= 0.90 ? 'rgba(20, 184, 166, 0.15)' : 'rgba(245, 158, 11, 0.15)'
                         }}>
                           신뢰도 {Math.round(seg.confidence * 100)}%
+                        </span>
+                      )}
+                      {seg.corrected && (
+                        <span
+                          title={seg.original_text ? `원문: ${seg.original_text}` : 'LLM 문맥 보정됨'}
+                          style={{
+                            fontSize: '0.7rem',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(168, 85, 247, 0.10)',
+                            color: '#c084fc',
+                            border: '1px solid rgba(168, 85, 247, 0.20)'
+                          }}
+                        >
+                          ✨ AI 보정
                         </span>
                       )}
                     </div>
@@ -430,5 +447,6 @@ export default function RealtimeMeetingPage() {
         )}
       </div>
     </div>
+  </div>
   );
 }

@@ -379,3 +379,36 @@ h1, h2, h3, h4, h5, h6 {
   animation: pulseGlow 1.5s infinite;
 }
 
+/* Diversity STT 로고 애니메이션 */
+@keyframes barWave1 {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.8); }
+}
+@keyframes barWave2 {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.4); }
+}
+@keyframes barWave3 {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.6); }
+}
+@keyframes barWave4 {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.5); }
+}
+@keyframes barWave5 {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(2.2); }
+}
+
+.logo-bar-1, .logo-bar-2, .logo-bar-3, .logo-bar-4, .logo-bar-5 {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.logo-bar-1 { animation: barWave1 1.4s ease-in-out infinite; }
+.logo-bar-2 { animation: barWave2 1.8s ease-in-out infinite; }
+.logo-bar-3 { animation: barWave3 1.2s ease-in-out infinite; }
+.logo-bar-4 { animation: barWave4 1.6s ease-in-out infinite; }
+.logo-bar-5 { animation: barWave5 2.0s ease-in-out infinite; }
+

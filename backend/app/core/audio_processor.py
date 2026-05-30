@@ -21,6 +21,7 @@ class AudioBufferProcessor:
         self.silent_frames_count = 0
         self.is_speaking = False
         self.speaking_frames_count = 0  # 연속 음성 프레임 수
+        self.chunk_count = 0            # 수신 누적 청크 수 (로그용)
 
     def append_chunk(self, raw_bytes: bytes) -> bool:
         """
@@ -32,12 +33,14 @@ class AudioBufferProcessor:
         if len(chunk) == 0:
             return False
             
-        # 디버깅 오디오 신호 분석 로그 추가
-        import logging
-        db_logger = logging.getLogger("app.core.audio_processor")
-        if len(chunk) > 0:
-            db_logger.info(f"[Audio Debug] chunk_len={len(chunk)}, max={float(np.max(chunk)):.6f}, min={float(np.min(chunk)):.6f}, mean={float(np.mean(chunk)):.6f}")
-            
+        # 누적 청크 카운트만 로깅 (청크별 max/min/mean 상세 로그 제거 → 가독성)
+        self.chunk_count += 1
+        if self.chunk_count % 50 == 0:
+            import logging
+            logging.getLogger("app.core.audio_processor").info(
+                f"[Audio] 누적 청크 수신: {self.chunk_count}개"
+            )
+
         # 기존 버퍼에 결합
         self.buffer = np.concatenate((self.buffer, chunk))
         

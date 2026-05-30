@@ -29,8 +29,9 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Initializing STT Meeting system backend...")
     
-    # 1. 인메모리 세션 GC 데몬 시작
+    # 1. 세션 영속 저장소 초기화(DB 적재) + 인메모리 GC 데몬 시작
     session_manager = SessionManager.get_instance()
+    session_manager.init_store()
     session_manager.start_gc_loop()
     
     # 2. faster-whisper 모델 사전 메모리(VRAM) 탑재

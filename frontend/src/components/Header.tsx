@@ -11,20 +11,40 @@ export default function Header() {
       <div className="nav-container">
         <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
           <Link href="/" style={{ textDecoration: 'none' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'var(--gradient-neon)',
+                width: '36px',
+                height: '36px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontWeight: 'bold',
-                fontSize: '1.2rem',
-                color: 'white'
+                position: 'relative'
               }}>
-                Ω
+                <svg
+                  width="26"
+                  height="26"
+                  viewBox="0 0 26 26"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  style={{ overflow: 'visible' }}
+                >
+                  <defs>
+                    <linearGradient id="logo-grad-1" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#818cf8" />
+                      <stop offset="50%" stopColor="#c084fc" />
+                      <stop offset="100%" stopColor="#e879f9" />
+                    </linearGradient>
+                    <linearGradient id="logo-grad-2" x1="0%" y1="100%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#2dd4bf" />
+                      <stop offset="100%" stopColor="#818cf8" />
+                    </linearGradient>
+                  </defs>
+                  <rect x="1" y="9" width="3" height="8" rx="1.5" fill="url(#logo-grad-1)" className="logo-bar-1" />
+                  <rect x="6" y="4" width="3" height="18" rx="1.5" fill="url(#logo-grad-2)" className="logo-bar-2" />
+                  <rect x="11" y="1" width="3" height="24" rx="1.5" fill="url(#logo-grad-1)" className="logo-bar-3" />
+                  <rect x="16" y="6" width="3" height="14" rx="1.5" fill="url(#logo-grad-2)" className="logo-bar-4" />
+                  <rect x="21" y="10" width="3" height="6" rx="1.5" fill="url(#logo-grad-1)" className="logo-bar-5" />
+                </svg>
               </div>
               <span style={{
                 fontWeight: 800,
@@ -33,7 +53,7 @@ export default function Header() {
                 letterSpacing: '-0.03em',
                 color: 'white'
               }}>
-                Aura<span className="gradient-text">STT</span>
+                Diversity <span className="gradient-text">STT</span>
               </span>
             </div>
           </Link>

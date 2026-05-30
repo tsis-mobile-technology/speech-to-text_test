@@ -10,6 +10,8 @@ export interface Segment {
   speaker: string;
   confidence: number;
   is_final: boolean;
+  corrected?: boolean;
+  original_text?: string | null;
 }
 
 interface SessionContextType {
@@ -68,6 +70,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectCountRef = useRef(0);
+  // 회의 단위 안정적 세션 ID (재연결에도 유지 → 한 회의 = 한 세션)
+  const meetingIdRef = useRef<string | null>(null);
 
   // 오디오 하드웨어 관련 refs
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -90,8 +94,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     reconnectCountRef.current = 0;
 
     try {
-      console.log('🔌 WebSocket 연결 중:', url);
-      const ws = new WebSocket(url);
+      // 회의 단위 세션 ID 부여(없으면 생성). 재연결 시 동일 ID로 백엔드가 이어쓰기.
+      if (!meetingIdRef.current) {
+        meetingIdRef.current =
+          (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `m-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+      const sep = url.includes('?') ? '&' : '?';
+      const fullUrl = `${url}${sep}session_id=${meetingIdRef.current}`;
+      console.log('🔌 WebSocket 연결 중:', fullUrl);
+      const ws = new WebSocket(fullUrl);
 
       ws.onopen = () => {
         console.log('✅ WebSocket connected');
@@ -117,6 +130,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             });
             setPartialSegment(null);
             if (data.gpu_usage_mb) setGpuUsage(data.gpu_usage_mb);
+          } else if (data.type === 'corrected' && data.segment_id) {
+            // LLM 문맥 보정 결과로 해당 세그먼트 텍스트 교체
+            setSegments((prev) =>
+              prev.map((s) =>
+                s.id === data.segment_id
+                  ? { ...s, text: data.text, corrected: true, original_text: s.text }
+                  : s
+              )
+            );
           } else if (data.type === 'speaker_updated') {
             if (data.segments && Array.isArray(data.segments)) {
               setSegments(data.segments);
@@ -303,8 +325,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     if (wsRef.current) {
-      console.log('🔌 WebSocket 연결 해제');
+      console.log('🔌 WebSocket 연결 해제 (명시적 회의 종료)');
       wsRef.current.onclose = null; // 자동 재연결 차단을 위해 온클로즈 핸들러 해제
+      try {
+        // 명시적 종료 신호 → 백엔드가 최종 후처리(화자분리/완료저장) 수행
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ command: 'stop' }));
+        }
+      } catch (e) {
+        console.warn('stop 명령 전송 실패:', e);
+      }
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -313,7 +343,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setIsRecording(false);
   }, []);
 
-  // 세션 초기화
+  // 세션 초기화 (다음 '회의 시작'은 새 회의 → meetingId도 초기화하여 새 세션 발급)
   const clearSession = useCallback(() => {
     setSegments([]);
     setPartialSegment(null);
@@ -321,6 +351,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setGpuUsage(0);
     setWsError(null);
     setAudioError(null);
+    meetingIdRef.current = null;
   }, []);
 
   // Provider 전체가 언마운트될 때 리소스 해제

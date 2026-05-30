@@ -9,9 +9,14 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    extra_hosts:
+      # 컨테이너 → 호스트 LiteLLM(:4000) 접근용 (LLM 후교정)
+      - "host.docker.internal:host-gateway"
     volumes:
       # 호스트의 models 디렉토리와 컨테이너 내부 models 마운트하여 모델 가중치 영구 공유
       - ./backend/models:/app/models
+      # 세션 영속 저장(SQLite) + 회의 원본 오디오 보존 (재시작·재빌드에도 유지)
+      - ./backend/data:/app/data
     env_file:
       - .env
     deploy:
