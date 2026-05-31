@@ -86,6 +86,11 @@ class Settings:
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")          # LiteLLM 프록시 키 (.env 주입)
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o")        # LiteLLM 등록 alias (→ gemma-4-E4B)
     LLM_CONTEXT_WINDOW: int = 3                              # 직전 문장 개수 (제안 그대로)
+    # 보정 처리 시점: deferred(권장, 30초 후속 배치) | realtime(즉시) | off
+    LLM_CORRECTION_MODE: str = os.getenv("LLM_CORRECTION_MODE", "deferred")
+    LLM_DEFER_SECONDS: float = float(os.getenv("LLM_DEFER_SECONDS", "30"))  # 확정 후 이 시간 경과분만 보정
+    LLM_SWEEP_INTERVAL: float = 5.0                          # 대기 큐 점검 주기(초)
+    LLM_BATCH_SIZE: int = 5                                  # 1회 스윕 최대 처리 세그먼트 수
     LLM_ONLY_LOW_CONFIDENCE: bool = True                     # 저신뢰 세그먼트만 보정
     LLM_CONFIDENCE_GATE: float = 0.85                        # confidence < 이 값만 보정
     LLM_MAX_LEN_RATIO: float = 1.5                           # 교정본 길이 폭증 시 폐기(환각 가드)

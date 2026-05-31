@@ -143,6 +143,45 @@ async def websocket_stt_stream(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"⚠️ 백그라운드 보정 실패(원문 유지): {e}")
 
+    # ── 지연(deferred) 보정: 대기 큐 + 주기 스윕 워커 ──
+    # 저신뢰 세그먼트를 즉시 보정하지 않고 큐에 적재 → 확정 후 LLM_DEFER_SECONDS(기본 30s)
+    # 경과분만 모아 후속 처리. STT 자막은 지연 없이 즉시 표시되고 GPU 경쟁 스파이크도 분산.
+    pending_corrections: list = []  # [{"seg":.., "prev_texts":.., "ts":..}]
+
+    async def _correction_worker():
+        try:
+            while True:
+                await asyncio.sleep(settings.LLM_SWEEP_INTERVAL)
+                if not pending_corrections:
+                    continue
+                now = time.monotonic()
+                due = [p for p in pending_corrections
+                       if now - p["ts"] >= settings.LLM_DEFER_SECONDS][:settings.LLM_BATCH_SIZE]
+                for p in due:
+                    try:
+                        pending_corrections.remove(p)
+                    except ValueError:
+                        continue
+                    await _correct_in_background(p["seg"], p["prev_texts"])
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"⚠️ 보정 워커 오류: {e}")
+
+    async def _flush_pending_corrections():
+        """종료 시: 지연 무시하고 남은 대기분 전량 보정(최종 저장 반영)."""
+        items = list(pending_corrections)
+        pending_corrections.clear()
+        if items:
+            logger.info(f"🧹 종료 flush: 대기 보정 {len(items)}건 처리")
+        for p in items:
+            await _correct_in_background(p["seg"], p["prev_texts"])
+
+    correction_worker_task = None
+    if settings.LLM_CORRECTION_MODE == "deferred":
+        correction_worker_task = asyncio.create_task(_correction_worker())
+        logger.info(f"🕒 지연 보정 모드: {settings.LLM_DEFER_SECONDS:.0f}초 후속 배치")
+
     # Tier 3: 회의 시작~종료 전체 오디오를 디스크에 누적 보존 (화자분리/보관용)
     os.makedirs(str(settings.AUDIO_DIR), exist_ok=True)
     session_audio_path = os.path.join(str(settings.AUDIO_DIR), f"{session_id}.f32")
@@ -294,15 +333,24 @@ async def websocket_stt_stream(websocket: WebSocket):
                                         segment_count += 1
 
                                         # LLM 문맥 보정 (저신뢰 + 교정가치 있는 세그먼트만).
-                                        # ★논블로킹★: 백그라운드 태스크로 처리 → 5초 LLM 호출이 수신 루프를 막지 않음.
+                                        # deferred(기본): 즉시 보정하지 않고 대기 큐에 적재 → 30초 후속 배치.
+                                        # realtime: 즉시 백그라운드 보정. off: 보정 안 함.
                                         # trans_segment는 세션에 참조 저장되므로 보정 시 최종 결과에도 반영됨.
                                         corrector = LLMCorrector.get_instance()
                                         if corrector.should_correct(trans_segment.confidence, trans_segment.text):
-                                            task = asyncio.create_task(
-                                                _correct_in_background(trans_segment, prev_texts)
-                                            )
-                                            correction_tasks.add(task)
-                                            task.add_done_callback(correction_tasks.discard)
+                                            if settings.LLM_CORRECTION_MODE == "deferred":
+                                                pending_corrections.append({
+                                                    "seg": trans_segment,
+                                                    "prev_texts": prev_texts,
+                                                    "ts": time.monotonic(),
+                                                })
+                                            elif settings.LLM_CORRECTION_MODE == "realtime":
+                                                task = asyncio.create_task(
+                                                    _correct_in_background(trans_segment, prev_texts)
+                                                )
+                                                correction_tasks.add(task)
+                                                task.add_done_callback(correction_tasks.discard)
+                                            # "off": 보정 생략
                                     else:
                                         logger.debug(f"⚠️ Duplicate segment ignored: {seg_id}")
 
@@ -353,18 +401,28 @@ async def websocket_stt_stream(websocket: WebSocket):
     # 활성 세션 해제 (재연결이 같은 id로 다시 들어올 수 있도록 항상 먼저 해제)
     _active_ws_sessions.discard(session_id)
 
-    # 진행 중인 LLM 보정 백그라운드 태스크 정리 (항상)
-    if correction_tasks:
-        logger.info(f"⏳ 보정 태스크 {len(correction_tasks)}건 완료 대기...")
-        await asyncio.gather(*list(correction_tasks), return_exceptions=True)
+    # 지연 보정 워커 정지 (항상)
+    if correction_worker_task:
+        correction_worker_task.cancel()
+        try:
+            await correction_worker_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # ★ 종료 트리거 구분: 명시적 'stop'일 때만 최종 후처리. 단순 끊김은 이어쓰기 대기.
     if not finalize_requested:
+        # 단순 끊김: 미보정 대기분은 폐기(재연결/재처리 단순화), 누적 세그먼트는 이미 영속됨.
         logger.info(
             f"⏸️ 연결 끊김(재연결 대기) → 종료 후처리 생략, 세션 유지(processing): {session_id} "
-            f"({len(finalized_segments)} segments 보존됨)"
+            f"({len(finalized_segments)} segments 보존, 대기 보정 {len(pending_corrections)}건 폐기)"
         )
         return
+
+    # 명시적 종료: 남은 대기 보정 전량 flush + 진행중 태스크 완료 대기 → 최종 저장에 반영
+    await _flush_pending_corrections()
+    if correction_tasks:
+        logger.info(f"⏳ 보정 태스크 {len(correction_tasks)}건 완료 대기...")
+        await asyncio.gather(*list(correction_tasks), return_exceptions=True)
 
     # ==========================================================
     # 명시적 회의 종료(stop) 시 최종 후처리 (Tier 1+3)
